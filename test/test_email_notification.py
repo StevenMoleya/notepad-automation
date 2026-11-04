@@ -17,3 +17,39 @@ def test_send_notification_returns_false_when_credentials_missing(monkeypatch):
     )
 
     assert result is False
+
+
+def test_send_notification_successfully(monkeypatch):
+    class FakeSMTP:
+        def __init__(self, server, port):
+            self.server = server
+            self.port = port
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def starttls(self):
+            pass
+
+        def login(self, email, password):
+            pass
+
+        def send_message(self, email):
+            assert email["Subject"] == "Test notification"
+
+    monkeypatch.setattr("email_notification.GMAIL_ADDRESS", "test@gmail.com")
+    monkeypatch.setattr(
+        "email_notification.GMAIL_APP_PASSWORD", "fake-password")
+    monkeypatch.setattr(
+        "email_notification.NOTIFICATION_EMAIL", "recipient@gmail.com")
+    monkeypatch.setattr("email_notification.smtplib.SMTP", FakeSMTP)
+
+    result = send_notification(
+        "Test notification",
+        "This is a simulated email."
+    )
+
+    assert result is True
