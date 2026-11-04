@@ -28,3 +28,6 @@ jobs:
         run: |
           python -m py_compile notepad_report.py
           python -m py_compile email_notification.py
+
+      - name: Run automated tests
+        run: python -m pytest -v
