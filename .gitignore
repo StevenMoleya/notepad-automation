@@ -1,9 +1,18 @@
+# Environment secrets
 .env
-.venv/
-venv/
+
+# Python cache
 __pycache__/
-*.pyc
+*.py[cod]
+
+# Testing
 .pytest_cache/
+
+# Generated files
 *.log
 notepad_report.txt
-reports/
+
+# Local testing and scheduling
+manual_notepad_window_check.py
+list_notepad_windows.py
+Python Notepad Automation.xml

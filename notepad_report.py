@@ -1,3 +1,5 @@
+
+import os
 import subprocess
 import time
 import logging
@@ -5,21 +7,23 @@ from datetime import datetime
 from pathlib import Path
 
 import psutil
+import win32gui
+import win32process
+import win32con
+from dotenv import load_dotenv
+
 from email_notification import send_notification
 
 
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
+# Load environment variables
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 
 START_TIME = os.getenv("START_TIME", "08:10")
 STOP_TIME = os.getenv("STOP_TIME", "08:13")
 
 
 # Project files
-BASE_DIR = Path(__file__).resolve().parent
-
 LOG_FILE = BASE_DIR / "notepad_automation.log"
 REPORT_FILE = BASE_DIR / "notepad_report.txt"
 
@@ -36,33 +40,29 @@ logging.basicConfig(
 session_start = None
 session_timer = None
 process_info = []
+notepad_process = None
+notepad_window_handle = None
 
 started_today = None
 stopped_today = None
 
 
 def record_event(action, details=""):
-
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     entry = f"{timestamp} | {action} | {details}"
 
     logging.info("%s | %s", action, details)
-
     print(entry)
 
 
 def get_notepad_processes():
-
     processes = []
 
     for process in psutil.process_iter(
         ["pid", "name", "exe", "create_time"]
     ):
-
         try:
             if (process.info["name"] or "").lower() == "notepad.exe":
-
                 processes.append({
                     "PID": process.info["pid"],
                     "Executable": process.info["exe"] or "Unknown",
@@ -77,17 +77,58 @@ def get_notepad_processes():
     return processes
 
 
-def start_notepad():
+def get_notepad_window_handles():
+    handles = []
 
-    global session_start, session_timer, process_info
+    def callback(hwnd, extra):
+        if not win32gui.IsWindowVisible(hwnd):
+            return True
+
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+
+        try:
+            if psutil.Process(pid).name().lower() == "notepad.exe":
+                handles.append(hwnd)
+
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+        return True
+
+    win32gui.EnumWindows(callback, None)
+
+    return handles
+
+
+def start_notepad():
+    global session_start, session_timer
+    global process_info, notepad_process, notepad_window_handle
 
     try:
-
         record_event("START_REQUESTED", "Opening Notepad")
 
-        subprocess.Popen(["notepad.exe"])
+        # Record existing windows before launching
+        existing_windows = set(get_notepad_window_handles())
 
-        time.sleep(2)
+        notepad_process = subprocess.Popen(["notepad.exe"])
+
+        # Wait for the new window to appear
+        notepad_window_handle = None
+
+        for _ in range(20):
+            time.sleep(0.5)
+
+            current_windows = set(get_notepad_window_handles())
+            new_windows = current_windows - existing_windows
+
+            if new_windows:
+                notepad_window_handle = new_windows.pop()
+                break
+
+        if notepad_window_handle is None:
+            raise RuntimeError(
+                "Could not identify the new Notepad window."
+            )
 
         process_info = get_notepad_processes()
 
@@ -96,77 +137,64 @@ def start_notepad():
 
         record_event(
             "NOTEPAD_STARTED",
-            f"Processes detected: {len(process_info)}"
+            f"Window handle: {notepad_window_handle}"
         )
 
         message = (
             "Notepad automation started successfully.\n\n"
             f"Start time: {session_start}\n"
-            f"Processes detected: {len(process_info)}"
+            f"Window handle: {notepad_window_handle}"
         )
-
-        for process in process_info:
-            message += (
-                f"\nPID: {process['PID']}"
-                f"\nExecutable: {process['Executable']}"
-            )
 
         send_notification("Notepad Started", message)
 
     except Exception as error:
-
         record_event("START_ERROR", str(error))
-
-        send_notification(
-            "Notepad Start Failed",
-            str(error)
-        )
+        send_notification("Notepad Start Failed", str(error))
 
 
 def stop_notepad():
-
-    global process_info
+    global process_info, notepad_process, notepad_window_handle
 
     stop_time = datetime.now()
 
-    record_event("STOP_REQUESTED", "Closing Notepad")
+    record_event("STOP_REQUESTED", "Closing automation Notepad")
 
-    # Capture processes before closing
+    # Capture process information before closing
     processes_before_stop = get_notepad_processes()
 
     # Calculate session duration
     if session_timer is not None:
-
         duration = time.monotonic() - session_timer
-
         minutes, seconds = divmod(int(duration), 60)
-
         duration_text = f"{minutes} minutes and {seconds} seconds"
-
     else:
         duration_text = "Unknown"
 
-    # Close Notepad processes
+    # Close only the identified Notepad window
     try:
+        if (
+            notepad_window_handle is not None
+            and win32gui.IsWindow(notepad_window_handle)
+        ):
+            win32gui.PostMessage(
+                notepad_window_handle,
+                win32con.WM_CLOSE,
+                0,
+                0
+            )
 
-        result = subprocess.run(
-            ["taskkill", "/IM", "notepad.exe", "/F"],
-            capture_output=True,
-            text=True,
-            timeout=15
-        )
+            stop_status = (
+                f"Notepad window {notepad_window_handle} "
+                "received a close request"
+            )
 
-        if result.returncode == 0:
-            stop_status = "Notepad processes terminated successfully"
         else:
             stop_status = (
-                result.stderr.strip()
-                or result.stdout.strip()
-                or "No Notepad process was terminated"
+                "Automation Notepad window was already closed"
             )
 
     except Exception as error:
-
         stop_status = f"Closing error: {error}"
 
     record_event("NOTEPAD_STOPPED", stop_status)
@@ -175,7 +203,6 @@ def stop_notepad():
     process_details = ""
 
     for process in processes_before_stop:
-
         process_details += (
             f"\nPID: {process['PID']}"
             f"\nExecutable: {process['Executable']}"
@@ -183,7 +210,9 @@ def stop_notepad():
         )
 
     if not process_details:
-        process_details = "\nNo Notepad processes were detected before closing."
+        process_details = (
+            "\nNo Notepad processes were detected before closing."
+        )
 
     # Build activity report
     report = f"""
@@ -220,11 +249,15 @@ REPORT GENERATED
 """
 
     # Save report
-    REPORT_FILE.write_text(report, encoding="utf-8")
+    try:
+        REPORT_FILE.write_text(report, encoding="utf-8")
+        record_event("REPORT_GENERATED", str(REPORT_FILE))
 
-    record_event("REPORT_GENERATED", str(REPORT_FILE))
+    except OSError as error:
+        record_event("REPORT_ERROR", str(error))
+        return
 
-    # Send closing email with both attachments
+    # Send closing email with attachments
     email_sent = send_notification(
         "Notepad Closed - Session Activity Report",
         (
@@ -251,19 +284,15 @@ record_event("AUTOMATION_STARTED", "Monitoring schedule")
 
 
 while True:
-
     now = datetime.now()
-
     current_time = now.strftime("%H:%M")
     today = now.date()
 
     if current_time == START_TIME and started_today != today:
-
         start_notepad()
         started_today = today
 
     if current_time == STOP_TIME and stopped_today != today:
-
         stop_notepad()
         stopped_today = today
 

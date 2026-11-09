@@ -1,5 +1,7 @@
+
 import os
 import smtplib
+import mimetypes
 from pathlib import Path
 from email.message import EmailMessage
 from dotenv import load_dotenv
@@ -13,36 +15,54 @@ NOTIFICATION_EMAIL = os.getenv("NOTIFICATION_EMAIL")
 
 
 def send_notification(subject, message, log_file=None, attachments=None):
+    try:
+        # Validate credentials
+        if not all([
+            GMAIL_ADDRESS,
+            GMAIL_APP_PASSWORD,
+            NOTIFICATION_EMAIL
+        ]):
+            raise ValueError("Missing Gmail settings in .env file.")
 
-    email = EmailMessage()
-    email["From"] = GMAIL_ADDRESS
-    email["To"] = NOTIFICATION_EMAIL
-    email["Subject"] = subject
-    email.set_content(message)
+        email = EmailMessage()
+        email["From"] = GMAIL_ADDRESS
+        email["To"] = NOTIFICATION_EMAIL
+        email["Subject"] = subject
+        email.set_content(message)
 
-    files_to_attach = []
+        # Collect attachments
+        files_to_attach = []
 
-    if log_file:
-        files_to_attach.append(log_file)
+        if log_file:
+            files_to_attach.append(log_file)
 
-    if attachments:
-        files_to_attach.extend(attachments)
+        if attachments:
+            files_to_attach.extend(attachments)
 
-    for file_path in files_to_attach:
-        path = Path(file_path)
+        # Attach files
+        for file_path in files_to_attach:
+            path = Path(file_path)
 
-        if path.exists():
+            if not path.is_file():
+                raise FileNotFoundError(
+                    f"Attachment not found: {path}"
+                )
+
+            mime_type, encoding = mimetypes.guess_type(path.name)
+
+            if mime_type is None or encoding is not None:
+                mime_type = "application/octet-stream"
+
+            maintype, subtype = mime_type.split("/", 1)
+
             email.add_attachment(
                 path.read_bytes(),
-                maintype="text",
-                subtype="plain",
+                maintype=maintype,
+                subtype=subtype,
                 filename=path.name
             )
 
-    try:
-        if not all([GMAIL_ADDRESS, GMAIL_APP_PASSWORD, NOTIFICATION_EMAIL]):
-            raise ValueError("Missing Gmail settings in .env file.")
-
+        # Send email
         with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
             smtp.starttls()
             smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
