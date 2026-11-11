@@ -18,6 +18,24 @@ The project also demonstrates automated testing, version control, and CI/CD impl
 - **Continuous Integration:** GitHub Actions validates Python syntax and runs automated tests.
 - **Continuous Delivery:** Automatically packages the application and publishes GitHub releases.
 
+## Project Screenshots
+
+### Notepad Automation Report
+
+![Notepad Automation Report](screenshots/notepad-report.png)
+
+### Start Email Notification
+
+![Start Email Notification](screenshots/start-email.png)
+
+### Completion Email Notification
+
+![Completion Email Notification](screenshots/completion-email.png)
+
+### GitHub Actions CI/CD
+
+![GitHub Actions Success](screenshots/github-actions-success.png)
+
 ## Technologies Used
 
 | Technology             | Purpose                           |
